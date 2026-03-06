@@ -16,8 +16,7 @@ from pathlib import Path
 from typing import Dict, Optional
 from PIL import Image, ImageDraw, ImageFont
 
-# Proxy engine
-import tg_ws_proxy
+import proxy.tg_ws_proxy as tg_ws_proxy
 
 
 APP_NAME = "TgWsProxy"

@@ -10,12 +10,11 @@ import customtkinter
 ctk_path = os.path.dirname(customtkinter.__file__)
 
 a = Analysis(
-    ['tg_ws_tray.py'],
+    [os.path.join(os.path.dirname(SPEC), os.pardir, 'windows.py')],
     pathex=[],
     binaries=[],
     datas=[(ctk_path, 'customtkinter/')],
     hiddenimports=[
-        'tg_ws_proxy',
         'pystray._win32',
         'PIL._tkinter_finder',
         'customtkinter',
@@ -34,7 +33,7 @@ a = Analysis(
     noarchive=False,
 )
 
-icon_path = os.path.join(os.path.dirname(SPEC), 'icon.ico')
+icon_path = os.path.join(os.path.dirname(SPEC), os.pardir, 'icon.ico')
 if os.path.exists(icon_path):
     a.datas += [('icon.ico', icon_path, 'DATA')]
 

@@ -18,21 +18,10 @@ Telegram Desktop → SOCKS5 (127.0.0.1:1080) → TG WS Proxy → WSS (kws*.web.t
 4. Устанавливает WebSocket (TLS) соединение к соответствующему DC через домены `kws{N}.web.telegram.org`
 5. Если WS недоступен (302 redirect) — автоматически переключается на прямое TCP-соединение
 
-## Установка
+## 🚀 Быстрый старт
 
-### Из исходников
-
-```bash
-pip install -r requirements.txt
-```
-
-## Использование
-
-### Tray-приложение (рекомендуется для Windows)
-
-```bash
-python tg_ws_tray.py
-```
+### Windows
+Перейдите на [страницу релизов](https://github.com/Flowseal/tg-ws-proxy/releases) и скачайте **`TgWsProxy.exe`**. Он собирается автоматически через [Github Actions](https://github.com/Flowseal/tg-ws-proxy/actions) из открытого исходного кода.
 
 При первом запуске откроется окно с инструкцией по подключению Telegram Desktop. Приложение сворачивается в системный трей.
 
@@ -43,10 +32,22 @@ python tg_ws_tray.py
 - **Открыть логи** — открыть файл логов
 - **Выход** — остановить прокси и закрыть приложение
 
+## Установка из исходников
+
+```bash
+pip install -r requirements.txt
+```
+
+### Windows (Tray-приложение)
+
+```bash
+python windows.py
+```
+
 ### Консольный режим
 
 ```bash
-python tg_ws_proxy.py [--port PORT] [--dc-ip DC:IP ...] [-v]
+python proxy/tg_ws_proxy.py [--port PORT] [--dc-ip DC:IP ...] [-v]
 ```
 
 **Аргументы:**
@@ -61,13 +62,13 @@ python tg_ws_proxy.py [--port PORT] [--dc-ip DC:IP ...] [-v]
 
 ```bash
 # Стандартный запуск
-python tg_ws_proxy.py
+python proxy/tg_ws_proxy.py
 
 # Другой порт и дополнительные DC
-python tg_ws_proxy.py --port 9050 --dc-ip 1:149.154.175.205 --dc-ip 2:149.154.167.220
+python proxy/tg_ws_proxy.py --port 9050 --dc-ip 1:149.154.175.205 --dc-ip 2:149.154.167.220
 
 # С подробным логированием
-python tg_ws_proxy.py -v
+python proxy/tg_ws_proxy.py -v
 ```
 
 ## Настройка Telegram Desktop
@@ -87,7 +88,7 @@ python tg_ws_proxy.py -v
 
 ## Конфигурация
 
-Tray-приложение хранит конфигурацию в `%APPDATA%/TgWsProxy/config.json`:
+Tray-приложение хранит данные в `%APPDATA%/TgWsProxy`:
 
 ```json
 {
@@ -100,19 +101,14 @@ Tray-приложение хранит конфигурацию в `%APPDATA%/Tg
 }
 ```
 
-Логи записываются в `%APPDATA%/TgWsProxy/proxy.log`.
+## Автоматическая сборка
 
-## Сборка exe
-
-Проект содержит спецификацию PyInstaller ([`tg_ws_proxy.spec`](tg_ws_proxy.spec)) и GitHub Actions workflow ([`.github/workflows/build.yml`](.github/workflows/build.yml)) для автоматической сборки.
+Проект содержит спецификацию PyInstaller ([`windows.spec`](packaging/windows.spec)) и GitHub Actions workflow ([`.github/workflows/build.yml`](.github/workflows/build.yml)) для автоматической сборки.
 
 ```bash
 pip install pyinstaller
-pyinstaller tg_ws_proxy.spec
+pyinstaller packaging/windows.spec
 ```
-
-## Дисклеймер
-Проект частично vibecoded by Opus 4.6. Если вы найдете баг, то создайте Issue с его описанем.
 
 ## Лицензия
 
