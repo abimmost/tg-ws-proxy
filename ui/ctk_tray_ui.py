@@ -308,7 +308,7 @@ def install_tray_config_form(
     header = ctk.CTkFrame(frame, fg_color="transparent")
     header.pack(fill="x", pady=(0, 2))
     ctk.CTkLabel(
-        header, text="Настройки прокси",
+        header, text="Настройки",
         font=(theme.ui_font_family, 17, "bold"),
         text_color=theme.text_primary, anchor="w",
     ).pack(side="left")
@@ -344,6 +344,17 @@ def install_tray_config_form(
         state="readonly",
         command=_on_appearance_change,
     ).pack(side="right")
+
+    ctk.CTkButton(
+        header, text="Donate ♥", width=90, height=28,
+        font=(theme.ui_font_family, 13, "bold"), corner_radius=8,
+        fg_color="#22c55e", hover_color="#16a34a",
+        text_color="#ffffff", border_width=0,
+        command=lambda: (
+            header.winfo_toplevel().iconify(),
+            webbrowser.open("https://nowpayments.io/donation/flowseal"),
+        ),
+    ).pack(side="right", padx=(0, 6))
 
     conn = _config_section(ctk, frame, theme, "Подключение MTProto")
 
