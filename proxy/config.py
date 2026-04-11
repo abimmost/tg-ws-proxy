@@ -47,6 +47,8 @@ class ProxyConfig:
     cfproxy_user_domain: str = ''
     cfproxy_domains: List[str] = field(default_factory=lambda: list(CFPROXY_DEFAULT_DOMAINS))
     active_cfproxy_domain: str = field(default_factory=lambda: random.choice(CFPROXY_DEFAULT_DOMAINS))
+    fake_tls_domain: str = ''
+    proxy_protocol: bool = False
 
 
 proxy_config = ProxyConfig()

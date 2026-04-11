@@ -8,6 +8,7 @@ class _Stats:
         self.connections_tcp_fallback = 0
         self.connections_cfproxy = 0
         self.connections_bad = 0
+        self.connections_masked = 0
         self.ws_errors = 0
         self.bytes_up = 0
         self.bytes_down = 0
@@ -24,6 +25,7 @@ class _Stats:
                 f"tcp_fb={self.connections_tcp_fallback} "
                 f"cf={self.connections_cfproxy} "
                 f"bad={self.connections_bad} "
+                f"masked={self.connections_masked} "
                 f"err={self.ws_errors} "
                 f"pool={pool_s} "
                 f"up={human_bytes(self.bytes_up)} "

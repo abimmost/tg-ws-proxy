@@ -153,6 +153,7 @@ def setup_logging(verbose: bool = False, log_max_mb: float = 5) -> None:
     level = logging.DEBUG if verbose else logging.INFO
     root = logging.getLogger()
     root.setLevel(level)
+    logging.getLogger('asyncio').setLevel(logging.WARNING)
 
     fh = logging.handlers.RotatingFileHandler(
         str(LOG_FILE),

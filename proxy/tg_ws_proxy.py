@@ -28,6 +28,7 @@ from .stats import stats
 from .config import proxy_config, parse_dc_ip_list, start_cfproxy_domain_refresh, CFPROXY_DEFAULT_DOMAINS
 from .bridge import MsgSplitter, CryptoCtx, do_fallback, bridge_ws_reencrypt
 from .raw_websocket import RawWebSocket, WsHandshakeError, set_sock_opts
+from .fake_tls import proxy_to_masking_domain, verify_client_hello, build_server_hello, FakeTlsStream, TLS_RECORD_HANDSHAKE
 
 
 log = logging.getLogger('tg-mtproto-proxy')
@@ -214,24 +215,114 @@ async def _handle_client(reader, writer, secret: bytes):
 
     set_sock_opts(writer.transport, proxy_config.buffer_size)
 
+    tls_stream = None
+    masking = proxy_config.fake_tls_domain
+
     try:
+        if proxy_config.proxy_protocol:
+            try:
+                pp_line = await asyncio.wait_for(
+                    reader.readline(), timeout=10)
+            except asyncio.IncompleteReadError:
+                log.debug("[%s] disconnected during PROXY header", label)
+                return
+            pp_text = pp_line.decode('ascii', errors='replace').strip()
+            if pp_text.startswith('PROXY '):
+                parts = pp_text.split()
+                if len(parts) >= 6:
+                    label = f"{parts[2]}:{parts[4]}"
+                log.debug("[%s] PROXY protocol: %s", label, pp_text)
+            else:
+                log.debug("[%s] expected PROXY header, got: %r", label,
+                          pp_text[:60])
+
         try:
-            handshake = await asyncio.wait_for(
-                reader.readexactly(HANDSHAKE_LEN), timeout=10)
+            first_byte = await asyncio.wait_for(
+                reader.readexactly(1), timeout=10)
         except asyncio.IncompleteReadError:
             log.debug("[%s] client disconnected before handshake", label)
             return
+
+        if first_byte[0] == TLS_RECORD_HANDSHAKE and masking:
+            try:
+                hdr_rest = await asyncio.wait_for(
+                    reader.readexactly(4), timeout=10)
+            except asyncio.IncompleteReadError:
+                log.debug("[%s] incomplete TLS record header", label)
+                return
+
+            tls_header = first_byte + hdr_rest
+            record_len = struct.unpack('>H', tls_header[3:5])[0]
+
+            try:
+                record_body = await asyncio.wait_for(
+                    reader.readexactly(record_len), timeout=10)
+            except asyncio.IncompleteReadError:
+                log.debug("[%s] incomplete TLS record body", label)
+                return
+
+            client_hello = tls_header + record_body
+
+            tls_result = verify_client_hello(client_hello, secret)
+
+            if tls_result is None:
+                log.debug("[%s] Fake TLS verify failed (size=%d rec=%d) "
+                          "-> masking",
+                          label, len(client_hello), record_len)
+                await proxy_to_masking_domain(
+                    reader, writer, client_hello, masking, label)
+                return
+
+            client_random, session_id, ts = tls_result
+            log.debug("[%s] Fake TLS handshake ok (ts=%d)", label, ts)
+
+            server_hello = build_server_hello(secret, client_random, session_id)
+            writer.write(server_hello)
+            await writer.drain()
+
+            tls_stream = FakeTlsStream(reader, writer)
+
+            try:
+                handshake = await asyncio.wait_for(
+                    tls_stream.readexactly(HANDSHAKE_LEN), timeout=10)
+            except asyncio.IncompleteReadError:
+                log.debug("[%s] incomplete obfs2 init inside TLS", label)
+                return
+        elif masking:
+            log.debug("[%s] non-TLS byte 0x%02X -> HTTP redirect", label,
+                      first_byte[0])
+            redirect = (
+                f"HTTP/1.1 301 Moved Permanently\r\n"
+                f"Location: https://{masking}/\r\n"
+                f"Content-Length: 0\r\n"
+                f"Connection: close\r\n\r\n"
+            ).encode()
+            writer.write(redirect)
+            await writer.drain()
+            return
+        else:
+            try:
+                rest = await asyncio.wait_for(
+                    reader.readexactly(HANDSHAKE_LEN - 1), timeout=10)
+            except asyncio.IncompleteReadError:
+                log.debug("[%s] client disconnected before handshake", label)
+                return
+            handshake = first_byte + rest
 
         result = _try_handshake(handshake, secret)
         if result is None:
             stats.connections_bad += 1
             log.debug("[%s] bad handshake (wrong secret or proto)", label)
             try:
-                while await reader.read(4096):
+                drain_src = tls_stream or reader
+                while await drain_src.read(4096):
                     pass
             except Exception:
                 pass
             return
+
+        clt_reader = tls_stream or reader
+        clt_writer = tls_stream or writer
 
         dc, is_media, proto_tag, client_dec_prekey_iv = result
 
@@ -308,7 +399,7 @@ async def _handle_client(reader, writer, secret: bytes):
             except Exception:
                 pass
             ok = await do_fallback(
-                reader, writer, relay_init, label,
+                clt_reader, clt_writer, relay_init, label,
                 dc, is_media, media_tag,
                 ctx, splitter=splitter)
             if not ok:
@@ -378,7 +469,7 @@ async def _handle_client(reader, writer, secret: bytes):
             except Exception:
                 pass
             ok = await do_fallback(
-                reader, writer, relay_init, label,
+                clt_reader, clt_writer, relay_init, label,
                 dc, is_media, media_tag,
                 ctx, splitter=splitter_fb)
             if ok:
@@ -399,7 +490,7 @@ async def _handle_client(reader, writer, secret: bytes):
 
         await ws.send(relay_init)
 
-        await bridge_ws_reencrypt(reader, writer, ws, label,
+        await bridge_ws_reencrypt(clt_reader, clt_writer, ws, label,
                                    dc=dc, is_media=is_media,
                                    ctx=ctx, splitter=splitter)
 
@@ -422,6 +513,7 @@ async def _handle_client(reader, writer, secret: bytes):
         stats.connections_active -= 1
         try:
             writer.close()
+            await writer.wait_closed()
         except BaseException:
             pass
 
@@ -467,12 +559,23 @@ async def _run(stop_event: Optional[asyncio.Event] = None):
             pass
 
     link_host = get_link_host(proxy_config.host)
-    tg_link = f"tg://proxy?server={link_host}&port={proxy_config.port}&secret=dd{proxy_config.secret}"
+    ftls = proxy_config.fake_tls_domain
+    dd_link = (f"tg://proxy?server={link_host}"
+               f"&port={proxy_config.port}"
+               f"&secret=dd{proxy_config.secret}")
+    ee_link = ""
+    if ftls:
+        domain_hex = ftls.encode('ascii').hex()
+        ee_link = (f"tg://proxy?server={link_host}"
+                   f"&port={proxy_config.port}"
+                   f"&secret=ee{proxy_config.secret}{domain_hex}")
 
     log.info("=" * 60)
     log.info("  Telegram MTProto WS Bridge Proxy")
     log.info("  Listening on   %s:%d", proxy_config.host, proxy_config.port)
     log.info("  Secret:        %s", proxy_config.secret)
+    if ftls:
+        log.info("  Fake TLS:      %s", ftls)
     log.info("  Target DC IPs:")
     for dc in sorted(proxy_config.dc_redirects.keys()):
         ip = proxy_config.dc_redirects.get(dc)
@@ -482,8 +585,12 @@ async def _run(stop_event: Optional[asyncio.Event] = None):
         user_domain = "user" if proxy_config.cfproxy_user_domain else "auto"
         log.info("  CF proxy:      enabled (%s | %s)", prio, user_domain)
     log.info("=" * 60)
-    log.info("  Connect link:")
-    log.info("    %s", tg_link)
+    log.info("  Connect links:")
+    if ftls:
+        log.info("    ee (Fake TLS):        %s", ee_link)
+    else:
+        log.info("       (standard):        %s", proxy_config.secret)
+        log.info("    dd (random padding):  %s", dd_link)
     log.info("=" * 60)
 
     async def log_stats():
@@ -569,6 +676,13 @@ def main():
                     help='Disable Cloudflare proxy fallback')
     ap.add_argument('--cfproxy-priority', type=bool, default=True,
                     help='Try cfproxy before tcp fallback (default: true)')
+    ap.add_argument('--fake-tls-domain', type=str, default='',
+                    metavar='DOMAIN',
+                    help='Enable Fake TLS (ee-secret) masking with the given '
+                         'SNI domain, e.g. example.com')
+    ap.add_argument('--proxy-protocol', action='store_true',
+                    help='Accept PROXY protocol v1 header '
+                         '(for use behind nginx/haproxy with proxy_protocol on)')
     args = ap.parse_args()
 
     if not args.dc_ip:
@@ -603,6 +717,8 @@ def main():
     proxy_config.fallback_cfproxy = not args.no_cfproxy
     proxy_config.fallback_cfproxy_priority = args.cfproxy_priority
     proxy_config.cfproxy_user_domain = args.cfproxy_domain
+    proxy_config.fake_tls_domain = args.fake_tls_domain.strip()
+    proxy_config.proxy_protocol = args.proxy_protocol
 
     log_level = logging.DEBUG if args.verbose else logging.INFO
     log_fmt = logging.Formatter('%(asctime)s  %(levelname)-5s  %(message)s',
@@ -623,6 +739,8 @@ def main():
         )
         fh.setFormatter(log_fmt)
         root.addHandler(fh)
+
+    logging.getLogger('asyncio').setLevel(logging.WARNING)
 
     try:
         asyncio.run(_run())
